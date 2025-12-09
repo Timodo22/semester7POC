@@ -8,14 +8,17 @@ variables:
 # Stap 1: Servers bouwen in Azure
 deploy_terraform:
   stage: build_infra
-  image: hashicorp/terraform:light
+  image:
+    name: hashicorp/terraform:light
+    entrypoint: [""] # <--- DIT IS DE BELANGRIJKE FIX VOOR DE ERROR
   before_script:
     - cd terraform
     - terraform init
   script:
     - terraform apply -auto-approve
     # Verplaats de gemaakte inventory naar de hoofdmap
-    - mv inventory.ini ../inventory.ini
+    - mv ../inventory.ini ../inventory.ini || mv inventory.ini ../inventory.ini
+    # (Bovenstaande regel probeert beide locaties voor de zekerheid)
   artifacts:
     paths:
       - inventory.ini
@@ -28,9 +31,10 @@ configure_ansible:
   stage: configure_servers
   image: willhallonline/ansible:latest
   before_script:
-    # Haal de Prive Sleutel uit GitLab Variables (CI/CD Settings)
     - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 700 ~/.ssh
+    # We kopieren de File-Variabele naar de juiste plek
+    - cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - export ANSIBLE_HOST_KEY_CHECKING=False
   script:
