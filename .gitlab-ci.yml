@@ -1,0 +1,42 @@
+stages:
+  - build_infra
+  - configure_servers
+
+variables:
+  TF_IN_AUTOMATION: "true"
+
+# Stap 1: Servers bouwen in Azure
+deploy_terraform:
+  stage: build_infra
+  image: hashicorp/terraform:light
+  before_script:
+    - cd terraform
+    - terraform init
+  script:
+    - terraform apply -auto-approve
+    # Verplaats de gemaakte inventory naar de hoofdmap
+    - mv inventory.ini ../inventory.ini
+  artifacts:
+    paths:
+      - inventory.ini
+      - terraform/terraform.tfstate
+  only:
+    - main
+
+# Stap 2: Software installeren en configureren
+configure_ansible:
+  stage: configure_servers
+  image: willhallonline/ansible:latest
+  before_script:
+    # Haal de Prive Sleutel uit GitLab Variables (CI/CD Settings)
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+  script:
+    # Run Ansible met de inventory uit stap 1
+    - ansible-playbook -i inventory.ini ansible/playbook.yml --private-key ~/.ssh/id_rsa
+  dependencies:
+    - deploy_terraform
+  only:
+    - main

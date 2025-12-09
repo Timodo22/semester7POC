@@ -1,0 +1,6 @@
+.DS_Store
+*.tfstate
+*.tfstate.backup
+.terraform/
+inventory.ini
+id_rsa

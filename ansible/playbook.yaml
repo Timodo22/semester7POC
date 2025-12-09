@@ -1,0 +1,45 @@
+- hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt: update_cache=yes
+
+# 1. DATABASE SERVER
+- hosts: database
+  become: yes
+  tasks:
+    - name: Installeer Postgres
+      apt: name=postgresql state=present
+    - name: Start Postgres
+      service: name=postgresql state=started
+
+# 2. API SERVER
+- hosts: api
+  become: yes
+  tasks:
+    - name: Installeer Python en PIP
+      apt: name={{ item }} state=present
+      loop: [python3, python3-pip]
+    - name: Installeer FastAPI Libraries
+      pip: name={{ item }}
+      loop: [fastapi, uvicorn, psycopg2-binary]
+    - name: Kopieer app code
+      copy: src=../code/main.py dest=/home/azureuser/main.py
+
+# 3. FRONTEND SERVER
+- hosts: frontend
+  become: yes
+  tasks:
+    - name: Installeer Nginx
+      apt: name=nginx state=present
+    - name: Kopieer HTML
+      copy: src=../code/index.html dest=/var/www/html/index.html
+
+# 4. MONITORING SERVER
+- hosts: monitor
+  become: yes
+  tasks:
+    - name: Installeer Prometheus
+      apt: name=prometheus state=present
+    - name: Start Prometheus
+      service: name=prometheus state=started
