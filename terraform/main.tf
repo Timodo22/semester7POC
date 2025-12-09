@@ -28,7 +28,8 @@ resource "azurerm_public_ip" "ips" {
   name                = "ip-${count.index}"
   location            = azurerm_resource_group.poc.location
   resource_group_name = azurerm_resource_group.poc.name
-  allocation_method   = "Dynamic"
+  allocation_method   = "Static"  # <--- DIT IS DE WIJZIGING (Was Dynamic)
+  sku                 = "Standard" # We zetten deze er expliciet bij voor de zekerheid
 }
 
 # Netwerk Interfaces
