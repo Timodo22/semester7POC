@@ -30,15 +30,14 @@ configure_ansible:
   stage: configure_servers
   image: willhallonline/ansible:latest
   before_script:
-    # Hier komt de SSH fix die we eerder bespraken
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
-    # Gebruik cat omdat je variabele Type: File is
+    # We lezen de file variabele EN voegen een extra enter toe voor de zekerheid
     - cat "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - echo "" >> ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - export ANSIBLE_HOST_KEY_CHECKING=False
   script:
-    # Run Ansible
     - ansible-playbook -i inventory.ini ansible/playbook.yml --private-key ~/.ssh/id_rsa
   dependencies:
     - deploy_terraform
