@@ -1,2 +1,42 @@
-<h1>POC Frontend</h1>
-<p>Deze server is automatisch uitgerold.</p>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>POC Login System</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+        input { padding: 10px; margin: 5px; }
+        button { padding: 10px 20px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        #message { margin-top: 20px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Login Portal</h1>
+    <input type="text" id="username" placeholder="Gebruikersnaam"><br>
+    <input type="password" id="password" placeholder="Wachtwoord (hint: geheim)"><br>
+    <button onclick="login()">Inloggen</button>
+    <div id="message"></div>
+
+    <script>
+        // Ansible zal dit vervangen door het echte IP
+        const API_URL = "API_URL_PLACEHOLDER"; 
+
+        async function login() {
+            const user = document.getElementById('username').value;
+            const pass = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch(`${API_URL}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: user, password: pass })
+                });
+                const data = await response.json();
+                document.getElementById('message').innerText = `Status: ${data.status}`;
+                document.getElementById('message').style.color = data.status === 'success' ? 'green' : 'red';
+            } catch (error) {
+                document.getElementById('message').innerText = "Fout: Kan API niet bereiken";
+            }
+        }
+    </script>
+</body>
+</html>

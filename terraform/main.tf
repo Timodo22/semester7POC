@@ -25,10 +25,10 @@ resource "azurerm_subnet" "sn" {
 }
 
 # =========================
-# ✅ NETWORK SECURITY GROUP MET SSH
+# ✅ NETWORK SECURITY GROUP (SSH, HTTP, API, DB, MONITOR)
 # =========================
 resource "azurerm_network_security_group" "ssh_nsg" {
-  name                = "nsg-ssh"
+  name                = "nsg-allow-all-poc"
   location            = azurerm_resource_group.poc.location
   resource_group_name = azurerm_resource_group.poc.name
 
@@ -40,6 +40,54 @@ resource "azurerm_network_security_group" "ssh_nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "Allow-HTTP-Frontend"
+    priority                   = 1010
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "Allow-API"
+    priority                   = 1020
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8000"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "Allow-Postgres"
+    priority                   = 1030
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "5432"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "Allow-Prometheus"
+    priority                   = 1040
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9090"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }

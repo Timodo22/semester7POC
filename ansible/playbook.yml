@@ -9,9 +9,44 @@
   become: true
   tasks:
     - name: Installeer Postgres
-      apt: name=postgresql state=present
+      apt: name={{ item }} state=present
+      loop: [postgresql, postgresql-contrib, python3-psycopg2, acl]
+
     - name: Start Postgres
       service: name=postgresql state=started
+
+    - name: Stel wachtwoord in voor postgres user (voor POC)
+      become_user: postgres
+      postgresql_user:
+        name: postgres
+        password: postgres
+        role_attr_flags: SUPERUSER
+
+    - name: Sta connecties van buitenaf toe (postgresql.conf)
+      lineinfile:
+        path: /etc/postgresql/14/main/postgresql.conf
+        regexp: "^#listen_addresses = 'localhost'"
+        line: "listen_addresses = '*'"
+
+    - name: Sta connecties van buitenaf toe (pg_hba.conf)
+      lineinfile:
+        path: /etc/postgresql/14/main/pg_hba.conf
+        line: "host    all             all             0.0.0.0/0            md5"
+      notify: Restart Postgres
+
+    - name: Kopieer SQL script
+      copy: src=../code/init.sql dest=/tmp/init.sql
+
+    - name: Voer SQL script uit (Maak tabel aan)
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: postgres
+        state: restore
+        target: /tmp/init.sql
+
+  handlers:
+    - name: Restart Postgres
+      service: name=postgresql state=restarted
 
 # 2. API SERVER
 - hosts: api
@@ -19,12 +54,24 @@
   tasks:
     - name: Installeer Python en PIP
       apt: name={{ item }} state=present
-      loop: [python3, python3-pip]
+      loop: [python3, python3-pip, python3-venv]
+    
     - name: Installeer FastAPI Libraries
-      pip: name={{ item }}
-      loop: [fastapi, uvicorn, psycopg2-binary]
+      pip: name={{ item }} break_system_packages=true
+      loop: [fastapi, uvicorn, psycopg2-binary, prometheus-client]
+
     - name: Kopieer app code
       copy: src=../code/main.py dest=/home/azureuser/main.py
+
+    - name: Stop oude API proces (indien aanwezig)
+      shell: "pkill -f uvicorn || true"
+
+    - name: Start API met connectie naar Database
+      shell: |
+        export DB_HOST="{{ hostvars[groups['database'][0]].ansible_host }}"
+        nohup uvicorn main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
+      args:
+        chdir: /home/azureuser/
 
 # 3. FRONTEND SERVER
 - hosts: frontend
@@ -32,8 +79,15 @@
   tasks:
     - name: Installeer Nginx
       apt: name=nginx state=present
+
     - name: Kopieer HTML
       copy: src=../code/index.html dest=/var/www/html/index.html
+
+    - name: Zet juiste API IP in HTML (Koppeling maken)
+      replace:
+        path: /var/www/html/index.html
+        regexp: 'API_URL_PLACEHOLDER'
+        replace: "http://{{ hostvars[groups['api'][0]].ansible_host }}:8000"
 
 # 4. MONITORING SERVER
 - hosts: monitor
@@ -41,5 +95,22 @@
   tasks:
     - name: Installeer Prometheus
       apt: name=prometheus state=present
-    - name: Start Prometheus
-      service: name=prometheus state=started
+
+    - name: Configureer Prometheus (Scrape API)
+      copy:
+        dest: /etc/prometheus/prometheus.yml
+        content: |
+          global:
+            scrape_interval: 5s
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+            - job_name: 'fastapi_app'
+              static_configs:
+                - targets: ["{{ hostvars[groups['api'][0]].ansible_host }}:8000"]
+      notify: Restart Prometheus
+
+  handlers:
+    - name: Restart Prometheus
+      service: name=prometheus state=restarted
