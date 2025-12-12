@@ -5,25 +5,19 @@ stages:
 variables:
   TF_IN_AUTOMATION: "true"
 
-# Stap 1: Servers bouwen in Azure
+# Stap 1: Terraform (Bouw de infrastructuur)
 deploy_terraform:
   stage: build_infra
   image:
     name: hashicorp/terraform:light
-    entrypoint: [""] # <--- DIT IS DE BELANGRIJKE FIX VOOR DE ERROR
+    entrypoint: [""]
   before_script:
-    - mkdir -p ~/.ssh
-    - chmod 700 ~/.ssh
-    # Gebruik 'cat' in plaats van 'cp'. Dit werkt veiliger met GitLab File variables.
-    # Als $SSH_PRIVATE_KEY een bestandspad is, leest cat de inhoud en schrijft het naar id_rsa.
-    - cat "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - cd terraform             # <--- BELANGRIJK: Ga de juiste map in
+    - terraform init           # <--- BELANGRIJK: Initialiseer Terraform
   script:
     - terraform apply -auto-approve
-    # Verplaats de gemaakte inventory naar de hoofdmap
+    # Verplaats inventory voor de volgende stap
     - mv ../inventory.ini ../inventory.ini || mv inventory.ini ../inventory.ini
-    # (Bovenstaande regel probeert beide locaties voor de zekerheid)
   artifacts:
     paths:
       - inventory.ini
@@ -31,19 +25,20 @@ deploy_terraform:
   only:
     - main
 
-# Stap 2: Software installeren en configureren
+# Stap 2: Ansible (Software installeren)
 configure_ansible:
   stage: configure_servers
   image: willhallonline/ansible:latest
   before_script:
+    # Hier komt de SSH fix die we eerder bespraken
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
-    # We kopieren de File-Variabele naar de juiste plek
-    - cp "$SSH_PRIVATE_KEY" ~/.ssh/id_rsa
+    # Gebruik cat omdat je variabele Type: File is
+    - cat "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - export ANSIBLE_HOST_KEY_CHECKING=False
   script:
-    # Run Ansible met de inventory uit stap 1
+    # Run Ansible
     - ansible-playbook -i inventory.ini ansible/playbook.yml --private-key ~/.ssh/id_rsa
   dependencies:
     - deploy_terraform
