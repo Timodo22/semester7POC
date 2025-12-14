@@ -63,15 +63,15 @@
     - name: Kopieer app code
       copy: src=../code/main.py dest=/home/azureuser/main.py
 
-    # --- HIER ZAT DE FOUT ---
     - name: Stop oude API proces (indien aanwezig)
-      # We zoeken nu specifiek naar "uvicorn main:app" om te voorkomen dat we Ansible zelf killen
-      shell: "pkill -f 'uvicorn main:app' || true"
+      # Regex trucje: [u]vicorn zorgt dat hij niet zichzelf killt
+      shell: "pkill -f '[u]vicorn' || true"
       ignore_errors: true
 
     - name: Start API met connectie naar Database
+      # AANGEPAST: We gebruiken direct de groep waarde, niet hostvars
       shell: |
-        export DB_HOST="{{ hostvars[groups['database'][0]].ansible_host }}"
+        export DB_HOST="{{ groups['database'][0] }}"
         nohup uvicorn main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
       args:
         chdir: /home/azureuser/
@@ -87,10 +87,11 @@
       copy: src=../code/index.html dest=/var/www/html/index.html
 
     - name: Zet juiste API IP in HTML (Koppeling maken)
+      # AANGEPAST: We gebruiken direct de groep waarde
       replace:
         path: /var/www/html/index.html
         regexp: 'API_URL_PLACEHOLDER'
-        replace: "http://{{ hostvars[groups['api'][0]].ansible_host }}:8000"
+        replace: "http://{{ groups['api'][0] }}:8000"
 
 # 4. MONITORING SERVER
 - hosts: monitor
@@ -100,6 +101,7 @@
       apt: name=prometheus state=present
 
     - name: Configureer Prometheus (Scrape API)
+      # AANGEPAST: We gebruiken direct de groep waarde
       copy:
         dest: /etc/prometheus/prometheus.yml
         content: |
@@ -111,7 +113,7 @@
                 - targets: ['localhost:9090']
             - job_name: 'fastapi_app'
               static_configs:
-                - targets: ["{{ hostvars[groups['api'][0]].ansible_host }}:8000"]
+                - targets: ["{{ groups['api'][0] }}:8000"]
       notify: Restart Prometheus
 
   handlers:
