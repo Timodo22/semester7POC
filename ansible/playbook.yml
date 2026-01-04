@@ -15,7 +15,7 @@
     - name: Start Postgres
       service: name=postgresql state=started
 
-    - name: Stel wachtwoord in voor postgres user (voor POC)
+    - name: Stel wachtwoord in voor postgres user
       become_user: postgres
       postgresql_user:
         name: postgres
@@ -37,7 +37,7 @@
     - name: Kopieer SQL script
       copy: src=../code/init.sql dest=/tmp/init.sql
 
-    - name: Voer SQL script uit (Maak tabel aan)
+    - name: Voer SQL script uit
       become_user: postgres
       community.postgresql.postgresql_db:
         name: postgres
@@ -58,16 +58,16 @@
     
     - name: Installeer FastAPI Libraries
       pip: name={{ item }} break_system_packages=true
-      loop: [fastapi, uvicorn, psycopg2-binary, prometheus-client]
+      loop: [fastapi, uvicorn, psycopg2-binary, prometheus-client, requests]
 
     - name: Kopieer app code
       copy: src=../code/main.py dest=/home/azureuser/main.py
 
-    - name: Stop oude API proces (indien aanwezig)
+    - name: Stop oude API proces
       shell: "pkill -f '[u]vicorn' || true"
       ignore_errors: true
 
-    - name: Start API met connectie naar Database
+    - name: Start API
       shell: |
         export DB_HOST="{{ groups['database'][0] }}"
         nohup uvicorn main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
@@ -84,25 +84,45 @@
     - name: Kopieer HTML
       copy: src=../code/index.html dest=/var/www/html/index.html
 
-    - name: Zet juiste API IP in HTML (Koppeling maken)
+    - name: Zet API IP in HTML
       replace:
         path: /var/www/html/index.html
         regexp: 'API_URL_PLACEHOLDER'
         replace: "http://{{ groups['api'][0] }}:8000"
 
-# 4. MONITORING SERVER
+# 4. MONITORING SERVER (Prometheus + Grafana + Auto Dashboard)
 - hosts: monitor
   become: true
   tasks:
-    - name: Installeer Prometheus
-      apt: name=prometheus state=present
+    - name: Installeer Prometheus dependencies
+      apt: name={{ item }} state=present
+      loop: [prometheus, apt-transport-https, software-properties-common, wget]
 
-    - name: Configureer Prometheus (Scrape API)
+    # --- PROMETHEUS CONFIG ---
+    - name: Maak Alert Rules bestand aan
+      copy:
+        dest: /etc/prometheus/alert_rules.yml
+        content: |
+          groups:
+          - name: security_alerts
+            rules:
+            - alert: BruteForceAttack
+              expr: increase(login_attempts_total{status="failed"}[1m]) >= 3
+              for: 0m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Brute Force Detected op IP {{ $labels.ip }}"
+                description: "IP {{ $labels.ip }} ({{ $labels.country }}) heeft meer dan 3 keer gefaald."
+
+    - name: Configureer Prometheus
       copy:
         dest: /etc/prometheus/prometheus.yml
         content: |
           global:
             scrape_interval: 5s
+          rule_files:
+            - "alert_rules.yml"
           scrape_configs:
             - job_name: 'prometheus'
               static_configs:
@@ -111,6 +131,118 @@
               static_configs:
                 - targets: ["{{ groups['api'][0] }}:8000"]
       notify: Restart Prometheus
+
+    # --- GRAFANA INSTALLATIE ---
+    - name: Voeg Grafana GPG sleutel toe
+      shell: |
+        mkdir -p /etc/apt/keyrings/
+        wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | tee /etc/apt/keyrings/grafana.gpg > /dev/null
+      args:
+        creates: /etc/apt/keyrings/grafana.gpg
+
+    - name: Voeg Grafana Repo toe
+      lineinfile:
+        path: /etc/apt/sources.list.d/grafana.list
+        line: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+        create: yes
+
+    - name: Update apt en installeer Grafana
+      apt:
+        update_cache: yes
+        name: grafana
+        state: present
+
+    # --- AUTO-KOPPELEN DATASOURCE ---
+    - name: Provisioning Datasource (Prometheus)
+      copy:
+        dest: /etc/grafana/provisioning/datasources/prometheus.yaml
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              uid: prometheus_datasource
+              access: proxy
+              url: http://localhost:9090
+              isDefault: true
+              editable: false
+
+    # --- AUTO-INLADEN DASHBOARD ---
+    - name: Maak map voor dashboards
+      file:
+        path: /var/lib/grafana/dashboards
+        state: directory
+        mode: '0755'
+
+    - name: Provisioning Dashboard Provider
+      copy:
+        dest: /etc/grafana/provisioning/dashboards/default.yaml
+        content: |
+          apiVersion: 1
+          providers:
+            - name: 'Default'
+              orgId: 1
+              folder: ''
+              type: file
+              disableDeletion: false
+              updateIntervalSeconds: 10
+              options:
+                path: /var/lib/grafana/dashboards
+
+    - name: Kopieer Hacker Dashboard JSON
+      copy:
+        dest: /var/lib/grafana/dashboards/hacker_dashboard.json
+        content: |
+          {
+            "annotations": { "list": [] },
+            "editable": true,
+            "fiscalYearStartMonth": 0,
+            "graphTooltip": 0,
+            "links": [],
+            "liveNow": false,
+            "panels": [
+              {
+                "datasource": { "type": "prometheus", "uid": "prometheus_datasource" },
+                "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 80 } ] } }, "overrides": [] },
+                "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+                "id": 1,
+                "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
+                "pluginVersion": "10.0.0",
+                "targets": [ { "expr": "sum(login_attempts_total{status=\"failed\"})", "refId": "A" } ],
+                "title": "TOTAAL AANTAL MISLUKTE POGINGEN (HACKS)",
+                "type": "stat"
+              },
+              {
+                "datasource": { "type": "prometheus", "uid": "prometheus_datasource" },
+                "gridPos": { "h": 16, "w": 12, "x": 12, "y": 0 },
+                "id": 2,
+                "options": { "view": { "id": "world", "lat": 0, "lon": 0, "zoom": 1 }, "layers": [ { "type": "markers", "config": { "style": { "size": { "fixed": 10, "min": 2, "max": 15, "field": "Value" }, "color": { "fixed": "dark-red" }, "opacity": 0.8, "symbol": { "fixed": "circle" } }, "showLegend": true, "tooltip": true } } ] },
+                "targets": [ { "expr": "sum(login_attempts_total) by (country)", "format": "table", "refId": "A" } ],
+                "title": "AANVALLEN PER LAND (GEOMAP)",
+                "type": "geomap"
+              },
+              {
+                "datasource": { "type": "prometheus", "uid": "prometheus_datasource" },
+                "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+                "id": 3,
+                "targets": [ { "expr": "login_attempts_total", "format": "table", "refId": "A" } ],
+                "title": "LIVE IP LOG (DETAILS)",
+                "type": "table"
+              }
+            ],
+            "schemaVersion": 38,
+            "style": "dark",
+            "tags": ["security", "poc"],
+            "templating": { "list": [] },
+            "time": { "from": "now-15m", "to": "now" },
+            "title": "Security Operations Center (SOC)",
+            "uid": "hacker-dashboard-v1",
+            "version": 1,
+            "weekStart": ""
+          }
+
+    - name: Start Grafana Server
+      service: name=grafana-server state=restarted enabled=yes
 
   handlers:
     - name: Restart Prometheus
