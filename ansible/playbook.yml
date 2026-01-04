@@ -90,7 +90,7 @@
         regexp: 'API_URL_PLACEHOLDER'
         replace: "http://{{ groups['api'][0] }}:8000"
 
-# 4. MONITORING SERVER (Prometheus + Grafana + Auto Dashboard)
+# 4. MONITORING SERVER
 - hosts: monitor
   become: true
   tasks:
@@ -99,7 +99,6 @@
       loop: [prometheus, apt-transport-https, software-properties-common, wget]
 
     # --- PROMETHEUS CONFIG ---
-    # Hier gebruiken we {% raw %} zodat Ansible niet crasht op {{ $labels... }}
     - name: Maak Alert Rules bestand aan
       copy:
         dest: /etc/prometheus/alert_rules.yml
@@ -114,8 +113,8 @@
               labels:
                 severity: critical
               annotations:
-                summary: "Brute Force Detected op IP {{ $labels.ip }}"
-                description: "IP {{ $labels.ip }} ({{ $labels.country }}) heeft meer dan 3 keer gefaald."
+                summary: "Aanval gedetecteerd vanaf IP {{ $labels.ip }}"
+                description: "Gebruiker {{ $labels.username }} probeert in te breken vanaf IP {{ $labels.ip }} ({{ $labels.country }})."
           {% endraw %}
 
     - name: Configureer Prometheus
@@ -155,8 +154,8 @@
         name: grafana
         state: present
 
-    # --- AUTO-KOPPELEN DATASOURCE ---
-    - name: Provisioning Datasource (Prometheus)
+    # --- DATASOURCE ---
+    - name: Provisioning Datasource
       copy:
         dest: /etc/grafana/provisioning/datasources/prometheus.yaml
         content: |
@@ -170,7 +169,7 @@
               isDefault: true
               editable: false
 
-    # --- AUTO-INLADEN DASHBOARD ---
+    # --- DASHBOARD ---
     - name: Maak map voor dashboards
       file:
         path: /var/lib/grafana/dashboards
@@ -192,7 +191,7 @@
               options:
                 path: /var/lib/grafana/dashboards
 
-    - name: Kopieer Hacker Dashboard JSON
+    - name: Kopieer UITGEBREID Hacker Dashboard JSON
       copy:
         dest: /var/lib/grafana/dashboards/hacker_dashboard.json
         content: |
@@ -206,40 +205,50 @@
             "panels": [
               {
                 "datasource": { "type": "prometheus", "uid": "prometheus_datasource" },
-                "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 80 } ] } }, "overrides": [] },
-                "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+                "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+                "gridPos": { "h": 8, "w": 6, "x": 0, "y": 0 },
                 "id": 1,
+                "options": { "legend": { "displayMode": "list", "placement": "right", "showLegend": true }, "pieType": "donut", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "tooltip": { "mode": "single", "sort": "none" } },
+                "targets": [ { "expr": "sum(login_attempts_total) by (status)", "format": "time_series", "refId": "A" } ],
+                "title": "SUCCESS vs FAILED",
+                "type": "piechart"
+              },
+              {
+                "datasource": { "type": "prometheus", "uid": "prometheus_datasource" },
+                "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+                "id": 2,
                 "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-                "pluginVersion": "10.0.0",
                 "targets": [ { "expr": "sum(login_attempts_total{status=\"failed\"})", "refId": "A" } ],
-                "title": "TOTAAL AANTAL MISLUKTE POGINGEN (HACKS)",
+                "title": "TOTAAL FOUTE POGINGEN",
                 "type": "stat"
               },
               {
                 "datasource": { "type": "prometheus", "uid": "prometheus_datasource" },
-                "gridPos": { "h": 16, "w": 12, "x": 12, "y": 0 },
-                "id": 2,
-                "options": { "view": { "id": "world", "lat": 0, "lon": 0, "zoom": 1 }, "layers": [ { "type": "markers", "config": { "style": { "size": { "fixed": 10, "min": 2, "max": 15, "field": "Value" }, "color": { "fixed": "dark-red" }, "opacity": 0.8, "symbol": { "fixed": "circle" } }, "showLegend": true, "tooltip": true } } ] },
+                "gridPos": { "h": 14, "w": 12, "x": 12, "y": 0 },
+                "id": 3,
+                "options": { "view": { "id": "world", "lat": 0, "lon": 0, "zoom": 1 }, "layers": [ { "type": "markers", "config": { "style": { "size": { "fixed": 8, "min": 2, "max": 15, "field": "Value" }, "color": { "fixed": "red" }, "opacity": 0.8, "symbol": { "fixed": "circle" } }, "showLegend": true, "tooltip": true } } ] },
                 "targets": [ { "expr": "sum(login_attempts_total) by (country)", "format": "table", "refId": "A" } ],
-                "title": "AANVALLEN PER LAND (GEOMAP)",
+                "title": "HACKER MAP (Locatie)",
                 "type": "geomap"
               },
               {
                 "datasource": { "type": "prometheus", "uid": "prometheus_datasource" },
-                "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-                "id": 3,
-                "targets": [ { "expr": "login_attempts_total", "format": "table", "refId": "A" } ],
-                "title": "LIVE IP LOG (DETAILS)",
+                "gridPos": { "h": 10, "w": 12, "x": 0, "y": 8 },
+                "id": 4,
+                "options": { "footer": { "enablePagination": true, "fields": "", "reducer": [ "sum" ], "show": "none" }, "showHeader": true },
+                "targets": [ { "expr": "sum(login_attempts_total) by (ip, username, country, status)", "format": "table", "refId": "A" } ],
+                "title": "LIVE IP & GEBRUIKER LOG",
+                "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": false }, "indexByName": {}, "renameByName": { "Value": "Aantal Pogingen", "country": "Land", "ip": "IP Adres", "status": "Status", "username": "Gebruikersnaam" } } } ],
                 "type": "table"
               }
             ],
             "schemaVersion": 38,
             "style": "dark",
-            "tags": ["security", "poc"],
+            "tags": ["security"],
             "templating": { "list": [] },
-            "time": { "from": "now-15m", "to": "now" },
-            "title": "Security Operations Center (SOC)",
-            "uid": "hacker-dashboard-v1",
+            "time": { "from": "now-30m", "to": "now" },
+            "title": "Hacker Dashboard V2 - Advanced",
+            "uid": "hacker-dashboard-v2",
             "version": 1,
             "weekStart": ""
           }

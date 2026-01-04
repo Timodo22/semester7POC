@@ -1,16 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg2
 import os
+import requests
 from prometheus_client import Counter, make_asgi_app
 
 app = FastAPI()
 
-# --- CORS CONFIGURATIE (DE OPLOSSING) ---
-# Dit vertelt de browser dat verzoeken van andere servers (zoals je frontend) zijn toegestaan.
-origins = ["*"]  # Voor een POC is "*" (alles toestaan) prima. In productie zet je hier specifieke IP's.
-
+# CORS Setup
+origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -18,61 +17,95 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# ----------------------------------------
 
 # Prometheus Metrics
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
-LOGIN_COUNTER = Counter('login_attempts_total', 'Totaal aantal inlogpogingen', ['status'])
+# WAARSCHUWING: In productie stop je NOOIT usernames in labels (cardinality explosion).
+# Voor deze POC is het echter precies wat we willen zien.
+LOGIN_COUNTER = Counter(
+    'login_attempts_total', 
+    'Totaal aantal inlogpogingen', 
+    ['status', 'ip', 'country', 'username']
+)
 
-# Database Config (wordt ingevuld door Ansible via Environment Variable)
+# Database Config
 DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_USER = "postgres" # Standaard user
-DB_PASS = "postgres" # Voor POC doen we even makkelijk
+DB_USER = "postgres"
+DB_PASS = "postgres"
 DB_NAME = "postgres"
 
 def get_db_connection():
     try:
         conn = psycopg2.connect(
-            host=DB_HOST,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASS
+            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS
         )
         return conn
     except Exception as e:
         print(f"Connection Error: {e}")
-        raise e
+        # Geen raise, anders crasht de app als DB even down is
+        return None
+
+def get_country_from_ip(ip):
+    try:
+        # Lokale IP's negeren
+        if ip == "127.0.0.1" or ip.startswith("192.168") or ip.startswith("10."):
+            return "Local Network"
+        
+        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=2)
+        data = response.json()
+        if data['status'] == 'success':
+            return data['country']
+    except:
+        pass
+    return "Unknown"
 
 class LoginRequest(BaseModel):
     username: str
     password: str
 
 @app.post("/login")
-def login(request: LoginRequest):
+def login(request: Request, login_data: LoginRequest):
+    # 1. Haal ECHTE IP adres op (ook achter proxy/loadbalancer)
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0]
+    else:
+        client_ip = request.client.host
+    
+    # 2. Haal land op
+    country = get_country_from_ip(client_ip)
+
     status = "failed"
-    # Simpele check: wachtwoord moet 'geheim' zijn
-    if request.password == "geheim":
+    if login_data.password == "geheim":
         status = "success"
     
-    # Update Prometheus Counter
-    LOGIN_COUNTER.labels(status=status).inc()
+    # 3. Update Prometheus (NU MET USERNAME!)
+    LOGIN_COUNTER.labels(
+        status=status, 
+        ip=client_ip, 
+        country=country,
+        username=login_data.username
+    ).inc()
 
-    # Opslaan in Database
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("INSERT INTO login_attempts (username, status) VALUES (%s, %s)", (request.username, status))
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(f"DB Error: {e}")
-        # We laten de login niet crashen als de logging naar DB faalt, maar printen wel de error
+    # 4. Opslaan in Database
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO login_attempts (username, status) VALUES (%s, %s)", 
+                (login_data.username, status)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"DB Error: {e}")
 
-    return {"username": request.username, "status": status, "message": "Logged in" if status == "success" else "Wrong password"}
+    return {"status": status, "ip": client_ip, "country": country}
 
 @app.get("/")
 def read_root():
-    return {"Status": "API Online", "DB_Host": DB_HOST}
+    return {"Status": "API Online"}
