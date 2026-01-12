@@ -4,7 +4,6 @@
     - name: Update apt cache
       apt: update_cache=true
 
-# 1. DATABASE SERVER
 - hosts: database
   become: true
   tasks:
@@ -48,7 +47,6 @@
     - name: Restart Postgres
       service: name=postgresql state=restarted
 
-# 2. API SERVER
 - hosts: api
   become: true
   tasks:
@@ -74,7 +72,6 @@
       args:
         chdir: /home/azureuser/
 
-# 3. FRONTEND SERVER
 - hosts: frontend
   become: true
   tasks:
@@ -90,7 +87,6 @@
         regexp: 'API_URL_PLACEHOLDER'
         replace: "http://{{ groups['api'][0] }}:8000"
 
-# 4. MONITORING SERVER
 - hosts: monitor
   become: true
   tasks:
@@ -98,7 +94,6 @@
       apt: name={{ item }} state=present
       loop: [prometheus, apt-transport-https, software-properties-common, wget]
 
-    # --- PROMETHEUS CONFIG ---
     - name: Maak Alert Rules bestand aan
       copy:
         dest: /etc/prometheus/alert_rules.yml
@@ -134,7 +129,6 @@
                 - targets: ["{{ groups['api'][0] }}:8000"]
       notify: Restart Prometheus
 
-    # --- GRAFANA INSTALLATIE ---
     - name: Voeg Grafana GPG sleutel toe
       shell: |
         mkdir -p /etc/apt/keyrings/
@@ -154,7 +148,6 @@
         name: grafana
         state: present
 
-    # --- DATASOURCE ---
     - name: Provisioning Datasource
       copy:
         dest: /etc/grafana/provisioning/datasources/prometheus.yaml
@@ -169,7 +162,6 @@
               isDefault: true
               editable: false
 
-    # --- DASHBOARD ---
     - name: Maak map voor dashboards
       file:
         path: /var/lib/grafana/dashboards
